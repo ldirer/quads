@@ -1,13 +1,41 @@
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [package]
 name = "kdtree"
 version = "0.1.0"
 authors = ["Laurent Direr <laurent.direr@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+# I think rlib is rust-specific while cdylib is here for wasm. Just random-googled this.
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+name = "lib"
+
+# Why a `[[]]` here: we could have several binaries (an array!), we are allowed one lib only (no array!).
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+# Hack to workaround binary-only dependencies. https://stackoverflow.com/a/46017284/3914041
+# Proper solution would probably be to use a 'workspace' file organization.
+required-features = ['build-binary']
 
 [dependencies]
-image = "0.23.4"
+image = {version = "0.23.4", optional = true}
+wasm-bindgen = "0.2.67"
+
+[features]
+build-binary = ["image"]
+
+[dependencies.web-sys]
+version = "0.3.4"
+features = [
+    'Document',
+    'Element',
+    'HtmlElement',
+    'Node',
+    'Window',
+    'console',
+]
 
 [profile.release]
 # temporarily set to true for profiling (it's convenient to have names of functions in perf reports, this requires `debug`)

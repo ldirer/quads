@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Title</title>
+
+  <!--  copied (then adapted) from 'without a bundler' wasm-bindgen example -->
+  <script type="module">
+    // Use ES module import syntax to import functionality from the module
+    // that we have compiled.
+    //
+    // Note that the `default` import is an initialization function which
+    // will "boot" the module and make it ready to use. Currently browsers
+    // don't support natively imported WebAssembly as an ES module, but
+    // eventually the manual initialization won't be required!
+    import init, { ImageApproximation, RGBAImage } from './pkg/lib.js';
+
+    async function run() {
+      // First up we need to actually load the wasm file, so we use the
+      // default export to inform it where the wasm file is located on the
+      // server, and then we wait on the returned promise to wait for the
+      // wasm to be loaded.
+      //
+      // It may look like this: `await init('./pkg/without_a_bundler_bg.wasm');`,
+      // but there is also a handy default inside `init` function, which uses
+      // `import.meta` to locate the wasm file relatively to js file.
+      //
+      // Note that instead of a string you can also pass in any of the
+      // following things:
+      //
+      // * `WebAssembly.Module`
+      //
+      // * `ArrayBuffer`
+      //
+      // * `Response`
+      //
+      // * `Promise` which returns any of the above, e.g. `fetch("./path/to/wasm")`
+      //
+      // This gives you complete control over how the module is loaded
+      // and compiled.
+      //
+      // Also note that the promise, when resolved, yields the wasm module's
+      // exports which is the same as importing the `*_bg` module in other
+      // modes
+      let bg_module = await init();
+
+      // And afterwards we can use all the functionality defined in wasm.
+      return bg_module
+
+    }
+
+    let intervalHandler = undefined;
+    let redDotSrc = `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==`
+    loadImageUrl(redDotSrc)
+
+    let bg_module = undefined;
+
+    let bg_module_promise = run().then(_bg_module => {
+      bg_module = _bg_module;
+    });
+
+
+    function runWasm() {
+      if (bg_module === undefined) {
+        console.info("wasm module not loaded yet, self-scheduling for later");
+        bg_module_promise.then(runWasm)
+        return
+      }
+
+      let imageCanvas = document.querySelector('#canvas-picture')
+      let ctx = imageCanvas.getContext("2d")
+      window.ctx = ctx;
+      let [w, h] = [imageCanvas.width, imageCanvas.height];
+      let imageData = ctx.getImageData(0, 0, w, h);
+      console.log('imageData.height', imageData.height)
+      // console.dir(imageData)
+      // console.log('imageData.data', imageData.data.map(v => v !== 0).reduce((acc, curr) => acc || curr, false));
+      window.imageData = imageData;
+      let img = RGBAImage.constructor(imageData.data, imageData.width, imageData.height)
+      window.RGBAImage = RGBAImage;
+      window.ImageApproximation = ImageApproximation;
+      console.log('ImageApproximation', ImageApproximation)
+      // BEWARE: I didn't use too many references because wasm-bindgen didn't seem to like them. So we are MOVING img here!
+      // We get a 'null pointer passed to rust' error if we try to use img later on (in rust, eg by calling img.width()).
+      let approx = ImageApproximation.constructor(img, 20000)
+      console.log('approx', approx)
+      let counter = 0;
+      let previous_error = -1000;
+
+
+      intervalHandler = setInterval(() => {
+        counter += 1;
+        if (counter >= 100) {
+          console.info("max interval counter reached, breaking loop.")
+          clearInterval(intervalHandler);
+        }
+        if (previous_error === approx.previous_error()) {
+          console.info('error not progressing, stopping algorithm')
+          clearInterval(intervalHandler);
+        }
+        if (approx.current_iter() === approx.max_iter()) {
+          console.info('reached maximum approximation with given number of iterations');
+          clearInterval(intervalHandler)
+        }
+
+        // previous_error = approx.previous_error()
+        let done = approx.next();
+        console.log('done', done)
+        if (done) {
+          clearInterval(intervalHandler)
+        }
+        let approxData = new Uint8Array(bg_module.memory.buffer, approx.im_result_data_as_pointer(), 4 * w * h);
+
+        // ImageData.data is a UInt8ClampedArray, it has a `set` method
+        imageData.data.set(approxData);
+        ctx.putImageData(imageData, 0, 0);
+      }, 100)
+    }
+
+    // draw an image onto the canvas based on its url.
+    function loadImageUrl(src) {
+      if (intervalHandler !== undefined) {
+        clearInterval(intervalHandler)
+      }
+      console.log('loadImageUrl, src:', src)
+      const img = new Image();
+      img.onload = function () {
+        console.log('img on load')
+        let imageCanvas = document.querySelector('#canvas-picture')
+        // scale depending on available size.
+        const scale = imageCanvas.width / img.naturalWidth;
+        imageCanvas.height = img.naturalHeight * scale;
+        imageCanvas.getContext("2d").drawImage(img, 0, 0, imageCanvas.width, imageCanvas.height);
+        runWasm()
+      };
+      img.src = src;
+    }
+
+    function fileReceived(f) {
+      console.log('f', f)
+      const reader = new FileReader()
+      reader.onload = e => {
+        loadImageUrl(e.target.result)
+      }
+      reader.readAsDataURL(f)
+    }
+
+
+    let input = document.querySelector('#file-upload');
+    input.addEventListener('input', (e) => {
+      fileReceived(e.currentTarget.files[0])
+    })
+
+
+    // function setupDragAndDrop() {
+    //   let loader = document.querySelector('#loader')
+    //   loader.addEventListener('dragover', e => {
+    //     console.log('dragover')
+    //     e.preventDefault()
+    //     e.currentTarget.classList.add('dragover')
+    //   })
+    //
+    //   loader.addEventListener('dragleave', e => {
+    //     console.log('dragleave')
+    //     e.preventDefault()
+    //     e.currentTarget.classList.remove('dragover')
+    //   })
+    //   loader.addEventListener('drop', e => {
+    //     console.log('drop')
+    //     e.preventDefault()
+    //     e.stopPropagation()
+    //
+    //     e.currentTarget.classList.remove('dragover')
+    //     console.log('e', e)
+    //     console.log('e.dataTransfer.files', e.dataTransfer.files)
+    //     let f = e.dataTransfer.files[0]
+    //     fileReceived(f)
+    //   })
+    // }
+    //
+    // setupDragAndDrop()
+    </script>
+
+
+  <style>
+    #canvas-picture {
+        border: solid red 1px;
+    }
+  </style>
+</head>
+<body>
+
+<button type="button">Browse
+  <input id="file-upload" type="file" accept="image/*">
+</button>
+<canvas id="canvas-picture" width="600" height="600"></canvas>
+
+</body>
+</html>
