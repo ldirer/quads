@@ -72,40 +72,21 @@
       window.ctx = ctx;
       let [w, h] = [imageCanvas.width, imageCanvas.height];
       let imageData = ctx.getImageData(0, 0, w, h);
-      console.log('imageData.height', imageData.height)
-      // console.dir(imageData)
-      // console.log('imageData.data', imageData.data.map(v => v !== 0).reduce((acc, curr) => acc || curr, false));
-      window.imageData = imageData;
+      // window.imageData = imageData;
       let img = RGBAImage.constructor(imageData.data, imageData.width, imageData.height)
-      window.RGBAImage = RGBAImage;
-      window.ImageApproximation = ImageApproximation;
-      console.log('ImageApproximation', ImageApproximation)
       // BEWARE: I didn't use too many references because wasm-bindgen didn't seem to like them. So we are MOVING img here!
       // We get a 'null pointer passed to rust' error if we try to use img later on (in rust, eg by calling img.width()).
-      let approx = ImageApproximation.constructor(img, 20000)
-      console.log('approx', approx)
-      let counter = 0;
-      let previous_error = -1000;
-
+      let approx = ImageApproximation.constructor(img, 200000)
+      let running = false
 
       intervalHandler = setInterval(() => {
-        counter += 1;
-        if (counter >= 100) {
-          console.info("max interval counter reached, breaking loop.")
-          clearInterval(intervalHandler);
+        // we want to make sure we don't call `next` until we are done with previous calls. It uses a mutable reference.
+        // In rust that wouldn't be allowed, here it would cause a runtime error.
+        if (running) {
+          return
         }
-        if (previous_error === approx.previous_error()) {
-          console.info('error not progressing, stopping algorithm')
-          clearInterval(intervalHandler);
-        }
-        if (approx.current_iter() === approx.max_iter()) {
-          console.info('reached maximum approximation with given number of iterations');
-          clearInterval(intervalHandler)
-        }
-
-        // previous_error = approx.previous_error()
+        running = true
         let done = approx.next();
-        console.log('done', done)
         if (done) {
           clearInterval(intervalHandler)
         }
@@ -114,6 +95,7 @@
         // ImageData.data is a UInt8ClampedArray, it has a `set` method
         imageData.data.set(approxData);
         ctx.putImageData(imageData, 0, 0);
+        running = false
       }, 100)
     }
 
@@ -125,7 +107,6 @@
       console.log('loadImageUrl, src:', src)
       const img = new Image();
       img.onload = function () {
-        console.log('img on load')
         let imageCanvas = document.querySelector('#canvas-picture')
         // scale depending on available size.
         const scale = imageCanvas.width / img.naturalWidth;
@@ -137,7 +118,6 @@
     }
 
     function fileReceived(f) {
-      console.log('f', f)
       const reader = new FileReader()
       reader.onload = e => {
         loadImageUrl(e.target.result)

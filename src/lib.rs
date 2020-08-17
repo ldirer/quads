@@ -148,9 +148,6 @@ fn average_value(r: &Rectangle, im: &RGBAImage) -> [u8; 4] {
             avg[3] += a as u64;
         }
     }
-    if r.height() == 0 || r.width() == 0 {
-        println!("r: {:?}, dims: {} , {}", r, r.width(), r.height());
-    }
     let pixel_count = (r.width() as u64) * (r.height() as u64);
     [
         (avg[0] / pixel_count) as u8,
@@ -212,9 +209,6 @@ fn draw_rectangles<'a, T: IntoIterator<Item = &'a Rectangle>>(
                 } else {
                     avg
                 };
-                if y > 760 || x > 760 {
-                println!("x, y: {}, {}", x, y);
-                }
                 output.put_pixel(x, y, c)
             }
         }
@@ -226,11 +220,11 @@ fn draw_rectangles<'a, T: IntoIterator<Item = &'a Rectangle>>(
 pub struct ImageApproximation {
     im: RGBAImage,
     im_result: RGBAImage,
-    max_iter: u32,
+    pub max_iter: u32,
 
     rectangles: Vec<(f64, Rectangle)>,
-    current_iter: u32,
-    previous_error: f64,
+    pub current_iter: u32,
+    pub previous_error: f64,
 }
 
 #[wasm_bindgen]
@@ -279,17 +273,6 @@ fn remove_until<T> (values: &mut Vec<T>, predicate: fn(&T) -> bool) -> Option<T>
 
 #[wasm_bindgen]
 impl ImageApproximation {
-    pub fn current_iter(&self) -> u32 {
-        self.current_iter
-    }
-
-    pub fn max_iter(&self) -> u32 {
-        self.max_iter
-    }
-
-    pub fn previous_error(&self) -> f64 {
-        self.previous_error
-    }
 
     pub fn im_result_data_as_pointer(&self) -> *const u8 {
         self.im_result.data_as_pointer()
@@ -347,11 +330,11 @@ impl ImageApproximation {
             "Iteration {}, error {}, previous_error {}",
             self.current_iter, total_error, self.previous_error
         );
-        // Adding the == 0. condition to make sure we don't loop indefinitely when we have the 'perfect' picture.
-        return if self.previous_error == -1. || self.previous_error - total_error > ERROR_RATE_SAVE_FRAME || total_error == 0. {
+
+        return if self.previous_error == -1. || self.previous_error - total_error > ERROR_RATE_SAVE_FRAME {
             self.previous_error = total_error;
             false
-        } else if self.previous_error == total_error {
+        } else if self.previous_error == total_error || total_error == 0. {
             println!("Not making progress on error, returning early at iteration {}", self.current_iter);
             true
         } else {
@@ -367,6 +350,8 @@ pub fn process_image(im: RGBAImage, n_iter: u32, callback: &dyn Fn(&RGBAImage, u
     while !approx.next() {
         callback(&approx.im_result, approx.current_iter, approx.previous_error);
     }
+    // we want to apply the callback on the final state
+    callback(&approx.im_result, approx.current_iter, approx.previous_error);
 }
 
 #[cfg(test)]
