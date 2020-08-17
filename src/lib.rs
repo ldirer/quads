@@ -283,62 +283,62 @@ impl ImageApproximation {
     pub fn next(&mut self) -> bool {
         // console::log_1(&"next from rust".into());
         const ERROR_RATE_SAVE_FRAME: f64 = 10.;
-        if self.current_iter >= self.max_iter {
-            return true
-        }
-        self.current_iter += 1;
-
-        // we could filter so that we don't filter rectangles smaller than X pixels in width/height.
-        let maybe_rect = remove_until(&mut self.rectangles, |(_e, _r)| true); // r.width() > 5 && r.height() > 5);
-        let r: Rectangle;
-        match maybe_rect {
-            None => {
-                println!("rectangles list is empty, ran out of candidates!");
-                // console::log_1(&"rectangles list is empty, ran out of candidates!".into());
+        // I had a recursive call instead of a loop but had 'max call stack sized exceeded' in wasm
+        loop {
+            if self.current_iter >= self.max_iter {
                 return true
-            },
-            Some((_e, rect)) => r = rect,
-        }
+            }
+            self.current_iter += 1;
 
-        let splits = r.split();
+            // we could filter so that we don't filter rectangles smaller than X pixels in width/height.
+            let maybe_rect = remove_until(&mut self.rectangles, |(_e, _r)| true); // r.width() > 5 && r.height() > 5);
+            let r: Rectangle;
+            match maybe_rect {
+                None => {
+                    println!("rectangles list is empty, ran out of candidates!");
+                    // console::log_1(&"rectangles list is empty, ran out of candidates!".into());
+                    return true
+                },
+                Some((_e, rect)) => r = rect,
+            }
 
-        // incremental drawing of results.
-        draw_rectangles(&mut self.im_result, &self.im, &splits);
+            let splits = r.split();
 
-        // Split the rectangle and add to the list of candidates (at index determined by error)
-        for s in splits.into_iter() {
-            let s_area = (s.width() * s.height()) as f64;
-            // The error is not *exactly* the same as in fogleman's code. maybe an 'off by one' difference
-            let s_error = error_image(&s, &self.im) * s_area.powf(0.25);
-            // binary search Err is returned when the element is not found, contains the index where we should insert
-            let idx = self.rectangles
-                .binary_search_by(|pair| {
-                    pair.0
-                        .partial_cmp(&s_error)
-                        .expect("couldn't compare f64 values (NaN?)")
-                })
-                .unwrap_or_else(|x| x);
-            self.rectangles.insert(idx, (s_error, s));
-        }
+            // incremental drawing of results.
+            draw_rectangles(&mut self.im_result, &self.im, &splits);
 
-        let total_error: f64 = self.rectangles
-            .iter()
-            .map(|pair| pair.0 * pair.1.width() as f64 * pair.1.height() as f64)
-            .sum::<f64>()
-            / (self.im.width() as f64 * self.im.height() as f64);
-        println!(
-            "Iteration {}, error {}, previous_error {}",
-            self.current_iter, total_error, self.previous_error
-        );
+            // Split the rectangle and add to the list of candidates (at index determined by error)
+            for s in splits.into_iter() {
+                let s_area = (s.width() * s.height()) as f64;
+                // The error is not *exactly* the same as in fogleman's code. maybe an 'off by one' difference
+                let s_error = error_image(&s, &self.im) * s_area.powf(0.25);
+                // binary search Err is returned when the element is not found, contains the index where we should insert
+                let idx = self.rectangles
+                    .binary_search_by(|pair| {
+                        pair.0
+                            .partial_cmp(&s_error)
+                            .expect("couldn't compare f64 values (NaN?)")
+                    })
+                    .unwrap_or_else(|x| x);
+                self.rectangles.insert(idx, (s_error, s));
+            }
 
-        return if self.previous_error == -1. || self.previous_error - total_error > ERROR_RATE_SAVE_FRAME {
-            self.previous_error = total_error;
-            false
-        } else if self.previous_error == total_error || total_error == 0. {
-            println!("Not making progress on error, returning early at iteration {}", self.current_iter);
-            true
-        } else {
-            self.next()
+            let total_error: f64 = self.rectangles
+                .iter()
+                .map(|pair| pair.0 * pair.1.width() as f64 * pair.1.height() as f64)
+                .sum::<f64>()
+                / (self.im.width() as f64 * self.im.height() as f64);
+            println!(
+                "Iteration {}, error {}, previous_error {}",
+                self.current_iter, total_error, self.previous_error
+            );
+            if self.previous_error == -1. || self.previous_error - total_error > ERROR_RATE_SAVE_FRAME {
+                self.previous_error = total_error;
+                return false
+            } else if self.previous_error == total_error || total_error == 0. {
+                println!("Not making progress on error, returning early at iteration {}", self.current_iter);
+                return true
+            }
         }
     }
 }
