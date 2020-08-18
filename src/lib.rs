@@ -282,7 +282,7 @@ impl ImageApproximation {
     // return value indicates whether we are done or not
     pub fn next(&mut self) -> bool {
         // console::log_1(&"next from rust".into());
-        const ERROR_RATE_SAVE_FRAME: f64 = 10.;
+        const ERROR_RATE_SAVE_FRAME: f64 = 10.000001;
         // I had a recursive call instead of a loop but had 'max call stack sized exceeded' in wasm
         loop {
             if self.current_iter >= self.max_iter {

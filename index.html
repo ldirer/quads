@@ -15,6 +15,8 @@
     // eventually the manual initialization won't be required!
     import init, { ImageApproximation, RGBAImage } from './pkg/lib.js';
 
+    let runningWasm = false
+
     async function run() {
       // First up we need to actually load the wasm file, so we use the
       // default export to inform it where the wasm file is located on the
@@ -49,21 +51,22 @@
 
     }
 
-    let intervalHandler = undefined;
-    let redDotSrc = `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==`
-    loadImageUrl(redDotSrc)
-
     let bg_module = undefined;
 
     let bg_module_promise = run().then(_bg_module => {
       bg_module = _bg_module;
     });
 
+    let stepper;
+    let running = false;
 
-    function runWasm() {
+    let defaultImageSrc = `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==`
+    loadImageUrl(defaultImageSrc)
+
+    function setupWasm() {
       if (bg_module === undefined) {
         console.info("wasm module not loaded yet, self-scheduling for later");
-        bg_module_promise.then(runWasm)
+        bg_module_promise.then(setupWasm)
         return
       }
 
@@ -77,34 +80,37 @@
       // BEWARE: I didn't use too many references because wasm-bindgen didn't seem to like them. So we are MOVING img here!
       // We get a 'null pointer passed to rust' error if we try to use img later on (in rust, eg by calling img.width()).
       let approx = ImageApproximation.constructor(img, 200000)
-      let running = false
 
-      intervalHandler = setInterval(() => {
+      document.querySelector(".js-current-iter").textContent = `${approx.current_iter} - ${approx.previous_error}`;
+
+      stepper = function () {
+        console.log('STEPEPR')
         // we want to make sure we don't call `next` until we are done with previous calls. It uses a mutable reference.
         // In rust that wouldn't be allowed, here it would cause a runtime error.
-        if (running) {
+        if (runningWasm) {
           return
         }
-        running = true
+        runningWasm = true
         let done = approx.next();
         if (done) {
-          clearInterval(intervalHandler)
+          running = false;
         }
         let approxData = new Uint8Array(bg_module.memory.buffer, approx.im_result_data_as_pointer(), 4 * w * h);
 
         // ImageData.data is a UInt8ClampedArray, it has a `set` method
         imageData.data.set(approxData);
         ctx.putImageData(imageData, 0, 0);
-        running = false
-      }, 100)
+
+        document.querySelector(".js-current-iter").textContent = `${approx.current_iter} - ${approx.previous_error}`;
+
+        runningWasm = false
+      };
     }
+
 
     // draw an image onto the canvas based on its url.
     function loadImageUrl(src) {
-      if (intervalHandler !== undefined) {
-        clearInterval(intervalHandler)
-      }
-      console.log('loadImageUrl, src:', src)
+      running = false;
       const img = new Image();
       img.onload = function () {
         let imageCanvas = document.querySelector('#canvas-picture')
@@ -112,7 +118,7 @@
         const scale = imageCanvas.width / img.naturalWidth;
         imageCanvas.height = img.naturalHeight * scale;
         imageCanvas.getContext("2d").drawImage(img, 0, 0, imageCanvas.width, imageCanvas.height);
-        runWasm()
+        setupWasm();
       };
       img.src = src;
     }
@@ -131,41 +137,79 @@
       fileReceived(e.currentTarget.files[0])
     })
 
+    // start, step, stop.
+    // How do we even?
 
-    // function setupDragAndDrop() {
-    //   let loader = document.querySelector('#loader')
-    //   loader.addEventListener('dragover', e => {
-    //     console.log('dragover')
-    //     e.preventDefault()
-    //     e.currentTarget.classList.add('dragover')
-    //   })
-    //
-    //   loader.addEventListener('dragleave', e => {
-    //     console.log('dragleave')
-    //     e.preventDefault()
-    //     e.currentTarget.classList.remove('dragover')
-    //   })
-    //   loader.addEventListener('drop', e => {
-    //     console.log('drop')
-    //     e.preventDefault()
-    //     e.stopPropagation()
-    //
-    //     e.currentTarget.classList.remove('dragover')
-    //     console.log('e', e)
-    //     console.log('e.dataTransfer.files', e.dataTransfer.files)
-    //     let f = e.dataTransfer.files[0]
-    //     fileReceived(f)
-    //   })
-    // }
-    //
-    // setupDragAndDrop()
+    // Start: setInterval
+    // Stop: clearInterval.
+    // Step = stop, and make one call.
+    // One more thing is that wasm could be running even if we clearInterval-ed... Think call that takes a long time.
+    // In that case we can't call the code. That's a bit annoying. But eh.
+    // On new image 'uploaded', stop.
+
+    let startButton = document.querySelector(".js-start");
+    let stepButton = document.querySelector(".js-step");
+    let stopButton = document.querySelector(".js-stop");
+    let resetButton = document.querySelector(".js-reset");
+
+    let stepLoopTimeout;
+    function stepLoop() {
+      console.log('stepLoop, running', running)
+      // we make sure only one loop runs at a time by clearing any existing timeout.
+      clearTimeout(stepLoopTimeout);
+      if (running) {
+        stepper();
+        stepLoopTimeout = setTimeout(stepLoop, 1);
+      }
+    }
+    startButton.addEventListener('click', () => {
+      running = true;
+      stepLoop();
+    })
+
+    function stopHandler() {
+      console.log('STOP')
+      running = false;
+    }
+
+    stopButton.addEventListener('click', stopHandler)
+
+    stepButton.addEventListener('click', () => {
+      stopHandler();
+      stepper();
+    })
+
+    resetButton.addEventListener('click', () => {
+      stopHandler();
+      if (input.value !== '') {
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      } else {
+        // no file in the input, we want the default
+        loadImageUrl(defaultImageSrc)
+      }
+    })
+
+
+
+
+
     </script>
 
 
   <style>
+
+      :root {
+          --primary: green;
+      }
     #canvas-picture {
         border: solid red 1px;
     }
+
+
+    .button:hover {
+        cursor: pointer;
+    }
+
   </style>
 </head>
 <body>
@@ -174,6 +218,17 @@
   <input id="file-upload" type="file" accept="image/*">
 </button>
 <canvas id="canvas-picture" width="600" height="600"></canvas>
+
+<div class="buttons">
+  <button class="button js-start">Start</button>
+  <button class="button js-step">Step</button>
+  <button class="button js-stop">Stop</button>
+  <button class="button js-reset">Reset</button>
+</div>
+
+<div class="infos">
+  Current iteration: <span class="js-current-iter"></span>
+</div>
 
 </body>
 </html>
