@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Title</title>
+  <title>Rust + Wasm quadtree art</title>
 
   <!--  copied (then adapted) from 'without a bundler' wasm-bindgen example -->
   <script type="module">
@@ -14,8 +14,6 @@
     // don't support natively imported WebAssembly as an ES module, but
     // eventually the manual initialization won't be required!
     import init, { ImageApproximation, RGBAImage } from './pkg/lib.js';
-
-    let runningWasm = false
 
     async function run() {
       // First up we need to actually load the wasm file, so we use the
@@ -44,73 +42,84 @@
       // Also note that the promise, when resolved, yields the wasm module's
       // exports which is the same as importing the `*_bg` module in other
       // modes
-      let bg_module = await init();
-
       // And afterwards we can use all the functionality defined in wasm.
-      return bg_module
-
+      return await init()
     }
 
     let bg_module = undefined;
+    let stepper;
+    let running = true;
+    let runningWasm = false
+    let imageCanvas = document.querySelector('#canvas-picture')
+    let input = document.querySelector('#file-input');
 
     let bg_module_promise = run().then(_bg_module => {
       bg_module = _bg_module;
     });
 
-    let stepper;
-    let running = false;
-
-    let defaultImageSrc = `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==`
+    let defaultImageSrc = 'wasm-ferris-white-bg.png';
     loadImageUrl(defaultImageSrc)
+    // remove any cached file from the input.
+    // Browser would cache file so after a refresh we would get inconsistent 'reset' behavior.
+    const dT = new DataTransfer();
+    input.files = dT.files;
 
+    // weak attempt at regrouping some global variables
+    let state = {
+      approx: undefined,  // the wasm object we will manipulate
+      imageData: undefined,
+    }
+
+    /* Constructs the wasm objects we need and populate the global scope.
+     Returns a promise thingy. This is really only for the first call to this function when the wasm
+     module might not have been loaded yet...
+    */
     function setupWasm() {
       if (bg_module === undefined) {
         console.info("wasm module not loaded yet, self-scheduling for later");
-        bg_module_promise.then(setupWasm)
-        return
+        return bg_module_promise.then(setupWasm)
       }
 
-      let imageCanvas = document.querySelector('#canvas-picture')
       let ctx = imageCanvas.getContext("2d")
-      window.ctx = ctx;
       let [w, h] = [imageCanvas.width, imageCanvas.height];
       let imageData = ctx.getImageData(0, 0, w, h);
-      // window.imageData = imageData;
+      state.imageData = imageData;
       let img = RGBAImage.constructor(imageData.data, imageData.width, imageData.height)
       // BEWARE: I didn't use too many references because wasm-bindgen didn't seem to like them. So we are MOVING img here!
       // We get a 'null pointer passed to rust' error if we try to use img later on (in rust, eg by calling img.width()).
-      let approx = ImageApproximation.constructor(img, 200000)
+      state.approx = ImageApproximation.constructor(img, 200000)
 
-      document.querySelector(".js-current-iter").textContent = `${approx.current_iter} - ${approx.previous_error}`;
+      document.querySelector(".js-current-iter").textContent = `${state.approx.current_iter}`;// - ${state.approx.error}`;
 
       stepper = function () {
-        console.log('STEPEPR')
         // we want to make sure we don't call `next` until we are done with previous calls. It uses a mutable reference.
         // In rust that wouldn't be allowed, here it would cause a runtime error.
         if (runningWasm) {
           return
         }
         runningWasm = true
-        let done = approx.next();
+        let done = state.approx.next();
         if (done) {
           running = false;
         }
-        let approxData = new Uint8Array(bg_module.memory.buffer, approx.im_result_data_as_pointer(), 4 * w * h);
-
-        // ImageData.data is a UInt8ClampedArray, it has a `set` method
-        imageData.data.set(approxData);
-        ctx.putImageData(imageData, 0, 0);
-
-        document.querySelector(".js-current-iter").textContent = `${approx.current_iter} - ${approx.previous_error}`;
-
         runningWasm = false
       };
+      return Promise.resolve()
+    }
+
+    function updateDisplay() {
+      let approxData = new Uint8Array(bg_module.memory.buffer, state.approx.im_result_data_as_pointer(), 4 * state.imageData.width * state.imageData.height);
+
+      // ImageData.data is a UInt8ClampedArray, it has a `set` method
+      state.imageData.data.set(approxData);
+      imageCanvas.getContext("2d").putImageData(state.imageData, 0, 0);
+
+      document.querySelector(".js-current-iter").textContent = `${state.approx.current_iter}`;// - ${state.approx.error}`;
     }
 
 
     // draw an image onto the canvas based on its url.
     function loadImageUrl(src) {
-      running = false;
       const img = new Image();
       img.onload = function () {
         let imageCanvas = document.querySelector('#canvas-picture')
@@ -118,7 +127,11 @@
         const scale = imageCanvas.width / img.naturalWidth;
         imageCanvas.height = img.naturalHeight * scale;
         imageCanvas.getContext("2d").drawImage(img, 0, 0, imageCanvas.width, imageCanvas.height);
-        setupWasm();
+        setupWasm().then(() => {
+          if (running) {
+            startHandler()
+          }
+        });
       };
       img.src = src;
     }
@@ -132,43 +145,48 @@
     }
 
 
-    let input = document.querySelector('#file-upload');
     input.addEventListener('input', (e) => {
       fileReceived(e.currentTarget.files[0])
     })
 
-    // start, step, stop.
-    // How do we even?
-
-    // Start: setInterval
-    // Stop: clearInterval.
-    // Step = stop, and make one call.
-    // One more thing is that wasm could be running even if we clearInterval-ed... Think call that takes a long time.
-    // In that case we can't call the code. That's a bit annoying. But eh.
-    // On new image 'uploaded', stop.
-
+    // setup control buttons
     let startButton = document.querySelector(".js-start");
     let stepButton = document.querySelector(".js-step");
     let stopButton = document.querySelector(".js-stop");
     let resetButton = document.querySelector(".js-reset");
 
-    let stepLoopTimeout;
+    let stepLoopTimeout, updateDisplayLoopTimeout;
+
     function stepLoop() {
-      console.log('stepLoop, running', running)
+      // This loop reschedules itself as long as we are running.
       // we make sure only one loop runs at a time by clearing any existing timeout.
+      // I was using `setInterval` before but since we don't control how long a scheduled call makes
+      // it's better to let a call schedule the next one.
       clearTimeout(stepLoopTimeout);
       if (running) {
         stepper();
         stepLoopTimeout = setTimeout(stepLoop, 1);
       }
     }
-    startButton.addEventListener('click', () => {
+
+    function updateDisplayLoop() {
+      clearTimeout(updateDisplayLoopTimeout);
+      if (running) {
+        updateDisplay();
+        updateDisplayLoopTimeout = setTimeout(updateDisplayLoop, 200);
+      }
+    }
+
+    function startHandler() {
       running = true;
       stepLoop();
-    })
+      updateDisplayLoop();
+    }
+
+
+    startButton.addEventListener('click', startHandler)
 
     function stopHandler() {
-      console.log('STOP')
       running = false;
     }
 
@@ -177,11 +195,13 @@
     stepButton.addEventListener('click', () => {
       stopHandler();
       stepper();
+      updateDisplay();
     })
 
     resetButton.addEventListener('click', () => {
       stopHandler();
       if (input.value !== '') {
+        // make it like we just selected the file.
         input.dispatchEvent(new Event('input', { bubbles: true }))
       } else {
         // no file in the input, we want the default
@@ -190,45 +210,128 @@
     })
 
 
+    // Adapted from https://stackoverflow.com/a/38968948/3914041
+    // dragover and dragenter events need to have 'preventDefault' called
+    // in order for the 'drop' event to register.
+    // See: https://developer.mozilla.org/en-US/docs/Web/Guide/HTML/Drag_operations#droptargets
+    let dropContainer = document.querySelector("html");
+    dropContainer.ondragover = dropContainer.ondragenter = function (evt) {
+      evt.preventDefault();
+    };
 
+    dropContainer.ondrop = function (evt) {
+      evt.preventDefault();
+      // pretty simple -- but not for IE :(
+      let file = evt.dataTransfer.files[0];
+      let imageType = /image.*/;
+      if (!file.type.match(imageType)) {
+        return;
+      }
 
-
-    </script>
+      const dT = new DataTransfer();
+      dT.items.add(file);
+      input.files = dT.files;
+      // Need to manually trigger input event.
+      input.dispatchEvent(new Event('input'))
+    };
+  </script>
 
 
   <style>
 
-      :root {
-          --primary: green;
+      html {
+          font-family: monospace;
+          /* solarized-like colors */
+          background-color: #fdf6e3;
+          color: #657b83;
+
       }
-    #canvas-picture {
-        border: solid red 1px;
-    }
+
+      .button {
+          cursor: pointer;
+          font-family: inherit;
+          /* chrome-like padding. Explicit so firefox uses it */
+          padding: 1px 6px;
+      }
+
+      .container {
+          max-width: 600px;
+          margin: 1.5em auto 0 auto;
+
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+      }
+
+      .canvas-container {
+          /*border: solid red 1px;*/
+          position: relative;
+          margin: auto;
+      }
+
+      .canvas-container canvas {
+          margin-top: .5em;
+          margin-bottom: .5em;
+          /* checkered background for these transparent pictures */
+          background-image: linear-gradient(45deg, #808080 25%, transparent 25%), linear-gradient(-45deg, #808080 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #808080 75%), linear-gradient(-45deg, transparent 75%, #808080 75%);
+          background-size: 20px 20px;
+          background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      }
+
+      #file-input {
+          display: none;
+      }
 
 
-    .button:hover {
-        cursor: pointer;
-    }
-
+      .controls {
+          display: flex;
+          flex-direction: row;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 1.5em;
+      }
   </style>
+
+  <link rel="apple-touch-icon" sizes="180x180" href="favicon_io/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon_io/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon_io/favicon-16x16.png">
+  <link rel="manifest" href="favicon_io/site.webmanifest">
 </head>
 <body>
 
-<button type="button">Browse
-  <input id="file-upload" type="file" accept="image/*">
-</button>
-<canvas id="canvas-picture" width="600" height="600"></canvas>
 
-<div class="buttons">
-  <button class="button js-start">Start</button>
-  <button class="button js-step">Step</button>
-  <button class="button js-stop">Stop</button>
-  <button class="button js-reset">Reset</button>
+<div class="container">
+
+  <div style="font-size: 1.5em">Drag and drop an image or <span style="text-decoration: underline; cursor: pointer"
+                                                                onclick="document.querySelector('#file-input').click()">click to pick a file</span>
+  </div>
+  <input id="file-input" type="file" accept="image/*">
+
+  <div class="canvas-container">
+    <!-- height matches aspect ratio of default picture so there's no 'flashing' of bigger canvas -->
+    <canvas id="canvas-picture" width="600" height="378"></canvas>
+
+    <div class="controls">
+      <div class="buttons">
+        <button class="button js-start">Start</button>
+        <button class="button js-step">Step</button>
+        <button class="button js-stop">Stop</button>
+        <button class="button js-reset">Reset</button>
+      </div>
+
+      <div class="infos">
+        Current iteration: <span class="js-current-iter"></span>
+      </div>
+    </div>
+    <div style="font-size: 1.2em; margin-top: 2em;">
+      This is a (probably lesser) clone of <a target="_blank" rel="noopener noreferrer"
+                                        href="https://github.com/fogleman/Quads">fogleman's excellent work</a> written
+      in Rust and compiled to WebAssembly.
+      <br>
+      This runs 100% in your browser and I'm only saving your picture to my personal database for reasons.
+    </div>
+  </div>
+
 </div>
-
-<div class="infos">
-  Current iteration: <span class="js-current-iter"></span>
-</div>
-
 </body>
 </html>

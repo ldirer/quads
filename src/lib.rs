@@ -22,20 +22,20 @@ pub struct RGBAImage {
 }
 
 impl RGBAImage {
-    fn get_pix_offset(&self, i: usize, j: usize) -> usize {
-        (j * self.width as usize + i) * 4
+    fn get_pix_offset(&self, x: usize, y: usize) -> usize {
+        (y * self.width as usize + x) * 4
     }
 
-    fn get_pixel(&self, i: usize, j: usize) -> RGBATuple {
-        let offset = self.get_pix_offset(i, j);
+    fn get_pixel(&self, x: usize, y: usize) -> RGBATuple {
+        let offset = self.get_pix_offset(x, y);
         // we need to copy values into a fixed-size array.
         let mut pixel: [u8; 4] = [0, 0, 0, 0];
         pixel.copy_from_slice(&self.data[offset..(offset + 4)]);
         pixel
     }
 
-    fn put_pixel(&mut self, i: usize, j: usize, c: RGBATuple) {
-        let offset = self.get_pix_offset(i, j);
+    fn put_pixel(&mut self, x: usize, y: usize, c: RGBATuple) {
+        let offset = self.get_pix_offset(x, y);
         for (idx, channel_value) in c.iter().enumerate() {
             self.data[offset + idx] = channel_value.clone();
         }
@@ -197,14 +197,31 @@ fn draw_rectangles<'a, T: IntoIterator<Item = &'a Rectangle>>(
 ) {
     for r in rs.into_iter() {
         let avg = average_value(r, im);
-        for x in r.top_left.x..r.bottom_right.x {
-            for y in r.top_left.y..r.bottom_right.y {
+        // We draw the rectangles with the bottom.right boundaries not included
+        // So the rightmost/bottommost boundary might not be drawn at all
+        // We fix this by making the relevant boundary rectangles a bit bigger.
+        let x_range = if r.bottom_right.x == ((output.width - 1) as usize) {
+            // cannot use `..=`, inclusive range is not of the same type as range.
+            r.top_left.x..(r.bottom_right.x + 1)
+        } else {
+            r.top_left.x..r.bottom_right.x
+        };
+
+        let y_range = if r.bottom_right.y == ((output.height - 1) as usize) {
+            r.top_left.y..(r.bottom_right.y + 1)
+        } else {
+            r.top_left.y..r.bottom_right.y
+        };
+
+        for x in x_range {
+            for y in y_range.clone() {
                 let c = if x == r.top_left.x
                     || x == r.bottom_right.x
                     || y == r.top_left.y
                     || y == r.bottom_right.y
                 {
                     avg
+                    // draw a grey line
                     // [30, 30, 30, 255]
                 } else {
                     avg
@@ -224,7 +241,7 @@ pub struct ImageApproximation {
 
     rectangles: Vec<(f64, Rectangle)>,
     pub current_iter: u32,
-    pub previous_error: f64,
+    pub error: f64,
 }
 
 #[wasm_bindgen]
@@ -249,7 +266,7 @@ impl ImageApproximation {
             max_iter,
             rectangles,
             current_iter: 0,
-            previous_error: -1.,
+            error: -1.,
         }
     }
 }
@@ -278,68 +295,61 @@ impl ImageApproximation {
         self.im_result.data_as_pointer()
     }
 
-    // I tried to return values but the rust-wasm connection wasn't too happy about it. I yield!
-    // return value indicates whether we are done or not
+    // return value: whether we are 'done' or not.
     pub fn next(&mut self) -> bool {
-        // console::log_1(&"next from rust".into());
-        const ERROR_RATE_SAVE_FRAME: f64 = 10.000001;
-        // I had a recursive call instead of a loop but had 'max call stack sized exceeded' in wasm
-        loop {
-            if self.current_iter >= self.max_iter {
-                return true
-            }
-            self.current_iter += 1;
-
-            // we could filter so that we don't filter rectangles smaller than X pixels in width/height.
-            let maybe_rect = remove_until(&mut self.rectangles, |(_e, _r)| true); // r.width() > 5 && r.height() > 5);
-            let r: Rectangle;
-            match maybe_rect {
-                None => {
-                    println!("rectangles list is empty, ran out of candidates!");
-                    // console::log_1(&"rectangles list is empty, ran out of candidates!".into());
-                    return true
-                },
-                Some((_e, rect)) => r = rect,
-            }
-
-            let splits = r.split();
-
-            // incremental drawing of results.
-            draw_rectangles(&mut self.im_result, &self.im, &splits);
-
-            // Split the rectangle and add to the list of candidates (at index determined by error)
-            for s in splits.into_iter() {
-                let s_area = (s.width() * s.height()) as f64;
-                // The error is not *exactly* the same as in fogleman's code. maybe an 'off by one' difference
-                let s_error = error_image(&s, &self.im) * s_area.powf(0.25);
-                // binary search Err is returned when the element is not found, contains the index where we should insert
-                let idx = self.rectangles
-                    .binary_search_by(|pair| {
-                        pair.0
-                            .partial_cmp(&s_error)
-                            .expect("couldn't compare f64 values (NaN?)")
-                    })
-                    .unwrap_or_else(|x| x);
-                self.rectangles.insert(idx, (s_error, s));
-            }
-
-            let total_error: f64 = self.rectangles
-                .iter()
-                .map(|pair| pair.0 * pair.1.width() as f64 * pair.1.height() as f64)
-                .sum::<f64>()
-                / (self.im.width() as f64 * self.im.height() as f64);
-            println!(
-                "Iteration {}, error {}, previous_error {}",
-                self.current_iter, total_error, self.previous_error
-            );
-            if self.previous_error == -1. || self.previous_error - total_error > ERROR_RATE_SAVE_FRAME {
-                self.previous_error = total_error;
-                return false
-            } else if self.previous_error == total_error || total_error == 0. {
-                println!("Not making progress on error, returning early at iteration {}", self.current_iter);
-                return true
-            }
+        if self.current_iter >= self.max_iter {
+            return true
         }
+        self.current_iter += 1;
+
+        // we could filter so that we don't filter rectangles smaller than X pixels in width/height.
+        let maybe_rect = remove_until(&mut self.rectangles, |(_e, _r)| true); // r.width() > 5 && r.height() > 5);
+        let r: Rectangle;
+        match maybe_rect {
+            None => {
+                println!("rectangles list is empty, ran out of candidates!");
+                // console::log_1(&"rectangles list is empty, ran out of candidates!".into());
+                return true
+            },
+            Some((_e, rect)) => r = rect,
+        }
+
+        let splits = r.split();
+
+        // incremental drawing of results.
+        draw_rectangles(&mut self.im_result, &self.im, &splits);
+
+        // Split the rectangle and add to the list of candidates (at index determined by error)
+        for s in splits.into_iter() {
+            let s_area = (s.width() * s.height()) as f64;
+            // The error is not *exactly* the same as in fogleman's code. maybe an 'off by one' difference
+            let s_error = error_image(&s, &self.im) * s_area.powf(0.25);
+            // binary search Err is returned when the element is not found, contains the index where we should insert
+            let idx = self.rectangles
+                .binary_search_by(|pair| {
+                    pair.0
+                        .partial_cmp(&s_error)
+                        .expect("couldn't compare f64 values (NaN?)")
+                })
+                .unwrap_or_else(|x| x);
+            self.rectangles.insert(idx, (s_error, s));
+        }
+
+        let total_error: f64 = self.rectangles
+            .iter()
+            .map(|pair| pair.0 * pair.1.width() as f64 * pair.1.height() as f64)
+            .sum::<f64>()
+            / (self.im.width() as f64 * self.im.height() as f64);
+        println!(
+            "Iteration {}, error {}, previous_error {}",
+            self.current_iter, total_error, self.error
+        );
+        if self.error == total_error || total_error == 0. {
+            println!("Not making progress on error, returning early at iteration {}", self.current_iter);
+            return true
+        }
+        self.error = total_error;
+        return false
     }
 }
 
@@ -347,11 +357,20 @@ impl ImageApproximation {
 // Essentially I had this function signature but couldn't make it work with wasm-bindgen.
 pub fn process_image(im: RGBAImage, n_iter: u32, callback: &dyn Fn(&RGBAImage, u32, f64)) {
     let mut approx = ImageApproximation::constructor(im, n_iter);
+
+    const ERROR_RATE_SAVE_FRAME: f64 = 10.000001;
+    // I had a recursive call instead of a loop in a previous version but got 'max call stack sized exceeded' in wasm
+    let mut callback_invocation_error = approx.error;
     while !approx.next() {
-        callback(&approx.im_result, approx.current_iter, approx.previous_error);
+        let is_first_frame = callback_invocation_error == -1.;  // unfortunate leaking of implementation detail
+        if is_first_frame || callback_invocation_error - approx.error > ERROR_RATE_SAVE_FRAME {
+            // Significant improvement has been made (to allow saving a frame for instance).
+            callback(&approx.im_result, approx.current_iter, approx.error);
+            callback_invocation_error = approx.error;
+        }
     }
     // we want to apply the callback on the final state
-    callback(&approx.im_result, approx.current_iter, approx.previous_error);
+    callback(&approx.im_result, approx.current_iter, approx.error);
 }
 
 #[cfg(test)]
