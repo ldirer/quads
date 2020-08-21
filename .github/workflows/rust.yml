@@ -22,4 +22,6 @@ jobs:
       # I assure you things were working when this script installed v0.9.1. 
       run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
     - name: Build
+      # This is just a pretend build, I'm not using the output
+      # (would need to look into how this can be linked with netlify).
       run:  wasm-pack build --target web

@@ -1,0 +1,15 @@
+{
+  "name": "quads",
+  "collaborators": [
+    "Laurent Direr <laurent.direr@gmail.com>"
+  ],
+  "version": "0.1.0",
+  "files": [
+    "lib_bg.wasm",
+    "lib.js",
+    "lib.d.ts"
+  ],
+  "module": "lib.js",
+  "types": "lib.d.ts",
+  "sideEffects": false
+}
