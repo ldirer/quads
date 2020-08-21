@@ -178,15 +178,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kdtree"
-version = "0.1.0"
-dependencies = [
- "image",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -307,6 +298,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04f5f085b5d71e2188cb8271e5da0161ad52c3f227a661a3c135fdf28e258b12"
 dependencies = [
  "unicode-xid",
+]
+
+[[package]]
+name = "quads"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
