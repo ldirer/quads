@@ -1,0 +1,15 @@
+{
+  "name": "quads",
+  "collaborators": [
+    "Laurent Direr <laurent.direr@gmail.com>"
+  ],
+  "version": "0.1.0",
+  "files": [
+    "quadslib_bg.wasm",
+    "quadslib.js",
+    "quadslib.d.ts"
+  ],
+  "module": "quadslib.js",
+  "types": "quadslib.d.ts",
+  "sideEffects": false
+}
