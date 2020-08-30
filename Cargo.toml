@@ -9,7 +9,7 @@ edition = "2018"
 # I think rlib is rust-specific while cdylib is here for wasm. Just random-googled this.
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
-name = "lib"
+name = "quadslib"
 
 # Why a `[[]]` here: we could have several binaries (an array!), we are allowed one lib only (no array!).
 [[bin]]

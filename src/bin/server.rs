@@ -1,7 +1,7 @@
 use std::env;
 use image::{RgbaImage, ImageBuffer};
-// I can use ::lib because I *named* my lib lib in cargo.toml.
-use ::lib::{process_image, RGBAImage};
+// I can use ::quadslib because I *named* my lib quadslib in cargo.toml.
+use ::quadslib::{process_image, RGBAImage};
 
 
 // Convert from our 'flat' RGBAImage to an `image` crate object and back.
